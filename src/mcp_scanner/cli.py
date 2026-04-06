@@ -24,6 +24,7 @@ def main():
 @main.command()
 @click.option("--source-dir", envvar="SCANNER_SOURCE_DIR", help="Path to MCP server source files")
 @click.option("--tools-file", envvar="SCANNER_TOOLS_FILE", help="Path to tools.json file")
+@click.option("--server-name", envvar="SCANNER_SERVER_NAME", default="", help="MCP server name (for context-aware analysis)")
 @click.option("--output", "-o", envvar="SCANNER_OUTPUT", help="Output SARIF file path (default: stdout)")
 @click.option("--model", envvar="SCANNER_MODEL", default="claude-sonnet-4-6", help="Claude model for AI analysis")
 @click.option("--modules", envvar="SCANNER_MODULES", default="tool_descriptions,source_code", help="Comma-separated modules to run")
@@ -35,6 +36,7 @@ def main():
 def scan(
     source_dir: str | None,
     tools_file: str | None,
+    server_name: str,
     output: str | None,
     model: str,
     modules: str,
@@ -60,6 +62,7 @@ def scan(
     config = ScanConfig(
         source_dir=source_dir,
         tools_file=tools_file,
+        server_name=server_name,
         model=model,
         modules=[m.strip() for m in modules.split(",")],
         timeout=timeout,

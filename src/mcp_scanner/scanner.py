@@ -53,6 +53,9 @@ async def run_scan(config: ScanConfig, quiet: bool = False) -> ScanReport:
     )
     logger.info("Loaded %d signatures", len(signatures))
 
+    # Resolve server name: CLI/env > tools.json > empty
+    server_name = config.server_name
+
     # Tool description analysis
     if "tool_descriptions" in config.modules:
         tools = []
@@ -66,11 +69,17 @@ async def run_scan(config: ScanConfig, quiet: bool = False) -> ScanReport:
 
         if tools_file:
             try:
-                tools = load_tools_from_file(tools_file)
+                tools, file_server_name = load_tools_from_file(tools_file)
+                if not server_name and file_server_name:
+                    server_name = file_server_name
                 scan_context.tools_exported = len(tools)
                 scan_context.source_method = "tools_json"
             except (FileNotFoundError, json.JSONDecodeError, ValueError) as e:
                 logger.error("Failed to load tools: %s", e)
+
+        scan_context.server_name = server_name
+        if server_name:
+            logger.info("Server name: %s", server_name)
 
         if tools:
             logger.info("Analyzing %d tool definitions...", len(tools))
@@ -81,6 +90,7 @@ async def run_scan(config: ScanConfig, quiet: bool = False) -> ScanReport:
                 config_dir=config_dir,
                 use_ai=use_ai,
                 quiet=quiet,
+                server_name=server_name,
             )
             all_findings.extend(tool_findings)
             logger.info("Tool analysis complete: %d findings", len(tool_findings))
@@ -100,6 +110,7 @@ async def run_scan(config: ScanConfig, quiet: bool = False) -> ScanReport:
                 config_dir=config_dir,
                 use_ai=use_ai,
                 quiet=quiet,
+                server_name=server_name,
             )
             all_findings.extend(source_findings)
             scan_context.scanned_files = scanned_files[:100]  # Cap for report size

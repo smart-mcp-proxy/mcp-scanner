@@ -5,7 +5,7 @@ from mcp_scanner.tool_analyzer import _pattern_scan_tools, analyze_tools_sync
 
 
 def test_pattern_scan_detects_malicious_tools(malicious_tools_file):
-    tools = load_tools_from_file(malicious_tools_file)
+    tools, _ = load_tools_from_file(malicious_tools_file)
     signatures = load_baseline_signatures()
 
     findings = _pattern_scan_tools(tools, signatures)
@@ -21,7 +21,7 @@ def test_pattern_scan_detects_malicious_tools(malicious_tools_file):
 
 
 def test_pattern_scan_clean_tools(clean_tools_file):
-    tools = load_tools_from_file(clean_tools_file)
+    tools, _ = load_tools_from_file(clean_tools_file)
     signatures = load_baseline_signatures()
 
     findings = _pattern_scan_tools(tools, signatures)
@@ -31,7 +31,7 @@ def test_pattern_scan_clean_tools(clean_tools_file):
 
 
 def test_pattern_scan_evidence_included(malicious_tools_file):
-    tools = load_tools_from_file(malicious_tools_file)
+    tools, _ = load_tools_from_file(malicious_tools_file)
     signatures = load_baseline_signatures()
 
     findings = _pattern_scan_tools(tools, signatures)
@@ -44,7 +44,7 @@ def test_pattern_scan_evidence_included(malicious_tools_file):
 
 def test_analyze_tools_no_ai(malicious_tools_file):
     """Test full analysis without AI (pattern-only mode)."""
-    tools = load_tools_from_file(malicious_tools_file)
+    tools, _ = load_tools_from_file(malicious_tools_file)
     signatures = load_baseline_signatures()
 
     findings = analyze_tools_sync(

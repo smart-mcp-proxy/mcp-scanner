@@ -29,6 +29,7 @@ def main():
 
     source_dir = os.environ.get("SCANNER_SOURCE_DIR", "/scan/source")
     report_dir = os.environ.get("SCANNER_REPORT_DIR", "/scan/report")
+    server_name = os.environ.get("SCANNER_SERVER_NAME", "")
     model = os.environ.get("SCANNER_MODEL", "claude-sonnet-4-6")
     modules = os.environ.get("SCANNER_MODULES", "tool_descriptions,source_code")
     timeout = int(os.environ.get("SCANNER_TIMEOUT", "300"))
@@ -44,11 +45,12 @@ def main():
     output_path = os.path.join(report_dir, "results.sarif")
 
     logger.info("MCP AI Scanner starting")
-    logger.info("Source: %s, Tools: %s, Model: %s", source_dir, tools_file or "none", model)
+    logger.info("Source: %s, Tools: %s, Server: %s, Model: %s", source_dir, tools_file or "none", server_name or "unknown", model)
 
     config = ScanConfig(
         source_dir=source_dir if os.path.isdir(source_dir) else None,
         tools_file=tools_file,
+        server_name=server_name,
         model=model,
         modules=[m.strip() for m in modules.split(",")],
         timeout=timeout,

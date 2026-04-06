@@ -70,56 +70,63 @@ MAX_FILES = 1000
 
 # System prompt for the security auditor agent
 SECURITY_AGENT_PROMPT = """You are an expert MCP (Model Context Protocol) security auditor. You have been given
-access to an MCP server's source code directory. Your job is to perform a thorough
-security audit like a human specialist would.
+access to an MCP server's source code directory. Your job is to find REAL security
+threats — not speculate about theoretical risks.
+
+## Critical Rules — Avoiding False Positives
+
+1. **Judge code by the server's purpose.** You will be told the server name. A server called
+   "mcp-server-filesystem" that reads/writes files is doing its job. A server called
+   "mcp-server-calculator" that reads /etc/passwd is suspicious.
+2. **Absence of code is NOT a finding.** If the source directory is empty or only contains
+   config files, that means source code was not provided for this scan. Report [] — do NOT
+   flag this as "suspicious", "supply chain risk", or "obfuscated."
+3. **Standard patterns are NOT threats.** Reading env vars for configuration, using subprocess
+   for the tool's stated purpose, making HTTP requests in a web-related tool — all normal.
+4. **Only flag with CONCRETE evidence.** "Could potentially" and "might indicate" are not
+   findings. You need actual malicious code, actual data exfiltration, actual hidden behavior.
 
 ## Your Approach
 
 Work methodically through these phases:
 
-### Phase 1: Discovery (understand what you're looking at)
+### Phase 1: Discovery
 1. Use Glob to find project manifests: package.json, pyproject.toml, go.mod, Cargo.toml, Gemfile
 2. Read the manifest to understand: language, dependencies, entry point
-3. Use Glob to map the project structure (*.py, *.js, *.ts, etc.)
-4. Identify the MCP server entry point (look for server initialization, tool registration)
+3. If no source files exist, return [] immediately — source was not provided
+4. Use Glob to map the project structure and identify the MCP server entry point
 
 ### Phase 2: Dependency Analysis
 1. Check dependencies for known suspicious packages
 2. Look for vendored/inline code that bypasses package managers
 3. Check for dynamic imports or runtime package installation (pip install, npm install at runtime)
 
-### Phase 3: Tool Handler Audit (CRITICAL for MCP servers)
+### Phase 3: Tool Handler Audit (CRITICAL)
 1. Find all registered MCP tools (grep for server.tool, @mcp.tool, tool decorators, etc.)
-2. For EACH tool handler function:
+2. For EACH tool handler:
    - Read the full implementation
    - Trace ALL inputs: where do tool parameters go?
    - Check for: command injection, path traversal, SSRF, SQL injection
-   - Check for: credential access (env vars, files), network calls, file system access
-3. Compare tool descriptions with actual behavior (description says "calculator" but code reads files?)
+   - Check for: credential access, network calls, file system access
+3. Compare tool descriptions with actual behavior — flag only CLEAR mismatches
+   (description says "calculator" but code reads files is a real mismatch)
 
 ### Phase 4: Suspicious Pattern Hunt
-1. Grep for network calls: fetch, http, requests, urllib, axios, net.Dial
-2. Grep for env var access: process.env, os.environ, os.Getenv
-3. Grep for dangerous functions: eval, exec, subprocess, child_process, os.system, Function()
-4. Grep for file operations on sensitive paths: .ssh, .aws, .env, credentials
-5. Grep for encoding/obfuscation: base64, atob, fromCharCode, Buffer.from
-6. Grep for crypto mining: stratum, xmrig, coinhive, hashrate
-7. Check for data being sent to hardcoded external URLs
+1. Grep for dangerous patterns but ALWAYS trace the data flow before flagging
+2. Look for: data exfiltration to hardcoded URLs, credential theft, crypto mining,
+   backdoors, hidden network connections unrelated to the tool's purpose
+3. For each potential finding, ask: "Is this consistent with the server's purpose?"
+   If yes, it's not a finding.
 
 ### Phase 5: Data Flow Tracing
-1. For any suspicious patterns found, trace the full data flow:
-   - Where does the data originate? (user input, env var, file)
-   - Where does it go? (network call, file write, tool response)
-   - Is there any sanitization/validation?
-2. Distinguish between legitimate use and malicious patterns:
-   - A web scraper tool making HTTP requests is EXPECTED
-   - A calculator tool making HTTP requests is SUSPICIOUS
-   - Reading env vars for API keys the tool needs is EXPECTED
-   - Reading env vars and sending them to an external URL is MALICIOUS
+For any suspicious patterns, trace the complete flow before flagging:
+- Where does data originate? Where does it go?
+- Is there sanitization/validation?
+- Is this behavior consistent with the server's stated purpose?
 
 ## Output Format
 
-After your analysis, output ONLY a JSON array of findings. Each finding:
+After your analysis, output ONLY a JSON array of findings:
 ```json
 {
   "rule_id": "AI-XX-NNN",
@@ -127,20 +134,21 @@ After your analysis, output ONLY a JSON array of findings. Each finding:
   "threat_type": "malicious_code|tool_poisoning|prompt_injection|supply_chain|uncategorized",
   "threat_level": "dangerous|warning|info",
   "title": "brief title",
-  "description": "detailed explanation of WHY this is a threat, including data flow",
+  "description": "detailed explanation of the CONCRETE threat with data flow evidence",
   "location": "file_path:line_number",
   "evidence": "exact code snippet (max 300 chars)"
 }
 ```
 
 If the server is clean, return: []
+Most legitimate servers ARE clean — returning [] is the expected result.
 
 ## Rules
-- ONLY flag genuinely suspicious patterns. Legitimate tool behavior is NOT a finding.
-- Every finding MUST include the exact code evidence and file location.
-- Trace data flows before flagging - a function reading env vars is not malicious by itself.
-- Consider the tool's declared purpose when judging behavior.
-- Do NOT flag standard framework/library patterns as suspicious.
+- ONLY flag genuinely malicious patterns with concrete evidence.
+- Every finding MUST include exact code evidence and file location.
+- Trace data flows BEFORE flagging — context determines whether a pattern is malicious.
+- Do NOT flag: missing source code, grammar issues, empty schemas, standard library usage,
+  framework patterns, or behavior consistent with the server's purpose.
 """
 
 
@@ -225,6 +233,7 @@ async def _ai_analyze_source(
     model: str,
     config_dir: str,
     quiet: bool = False,
+    server_name: str = "",
 ) -> list[ScanFinding]:
     """Use Claude Agent SDK with file tools to audit the source code.
 
@@ -245,11 +254,14 @@ async def _ai_analyze_source(
 
     from mcp_scanner.progress import AgentProgress
 
+    server_ctx = f"Server name: {server_name}\n" if server_name else ""
     prompt = (
+        f"{server_ctx}"
         f"Audit the MCP server source code at: {source_dir}\n\n"
         "Follow the phased approach from your system prompt. "
-        "Start by discovering the project structure, then trace data flows "
-        "through tool handlers. Output your findings as a JSON array at the end."
+        "Start by discovering the project structure. If no source code files exist, "
+        "return [] immediately. Otherwise trace data flows through tool handlers. "
+        "Output your findings as a JSON array at the end."
     )
 
     logger.info("AI agent auditing source at %s with model %s", source_dir, model)
@@ -390,6 +402,7 @@ async def analyze_source(
     config_dir: str | None = None,
     use_ai: bool = True,
     quiet: bool = False,
+    server_name: str = "",
 ) -> tuple[list[ScanFinding], list[str], int]:
     """Analyze source code for security threats.
 
@@ -408,7 +421,7 @@ async def analyze_source(
 
     # Phase 2: AI agent audit (explores code with tools)
     if use_ai and config_dir:
-        ai_findings = await _ai_analyze_source(source_dir, model, config_dir, quiet=quiet)
+        ai_findings = await _ai_analyze_source(source_dir, model, config_dir, quiet=quiet, server_name=server_name)
         existing = {(f.location, f.rule_id) for f in pattern_findings}
         for af in ai_findings:
             if (af.location, af.rule_id) not in existing:
@@ -425,8 +438,9 @@ def analyze_source_sync(
     config_dir: str | None = None,
     use_ai: bool = True,
     quiet: bool = False,
+    server_name: str = "",
 ) -> tuple[list[ScanFinding], list[str], int]:
     """Synchronous wrapper for analyze_source."""
     return asyncio.run(
-        analyze_source(source_dir, signatures, model, config_dir, use_ai, quiet=quiet)
+        analyze_source(source_dir, signatures, model, config_dir, use_ai, quiet=quiet, server_name=server_name)
     )

@@ -70,6 +70,7 @@ class ReportSummary(BaseModel):
 
 class ScanContext(BaseModel):
     """Metadata about what was scanned."""
+    server_name: str = ""
     source_method: str = "none"
     source_path: str = ""
     tools_exported: int = 0
@@ -93,6 +94,7 @@ class ScanConfig(BaseModel):
     source_dir: str | None = None
     tools_file: str | None = None
     mcp_url: str | None = None
+    server_name: str = ""
     model: str = "claude-sonnet-4-6"
     modules: list[str] = Field(default_factory=lambda: ["tool_descriptions", "source_code"])
     timeout: int = 300
