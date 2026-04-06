@@ -1,4 +1,11 @@
-"""AI-powered source code analysis for malicious patterns."""
+"""AI-powered source code analysis for malicious patterns.
+
+Two-phase approach:
+1. Pattern scan: Fast regex matching against vulnerability signatures
+2. AI agent scan: Claude agent with file tools (Read, Grep, Glob) explores
+   the codebase like a security specialist - discovers structure, traces
+   data flows, and validates findings.
+"""
 
 from __future__ import annotations
 
@@ -32,6 +39,7 @@ def _sdk_kwargs(config_dir: str) -> dict:
         kwargs["env"] = {"CLAUDE_CONFIG_DIR": config_dir}
     return kwargs
 
+
 # File extensions to scan
 SCANNABLE_EXTENSIONS = {
     ".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
@@ -46,42 +54,82 @@ SKIP_DIRS = {
     "site-packages", "dist-packages", ".next", ".nuxt",
 }
 
-# Max file size to read (100KB)
 MAX_FILE_SIZE = 100_000
-
-# Max files to scan
 MAX_FILES = 1000
 
-# Max total content for AI analysis (50KB)
-MAX_AI_CONTENT = 50_000
+# System prompt for the security auditor agent
+SECURITY_AGENT_PROMPT = """You are an expert MCP (Model Context Protocol) security auditor. You have been given
+access to an MCP server's source code directory. Your job is to perform a thorough
+security audit like a human specialist would.
 
-SOURCE_ANALYSIS_PROMPT = """You are an MCP (Model Context Protocol) security code analyst. Analyze the following source code files from an MCP server for security threats.
+## Your Approach
 
-Check for:
-1. **Data Exfiltration**: Code that reads credentials/env vars and sends them to external services
-2. **Backdoors/Reverse Shells**: Code that opens network connections for remote access
-3. **Obfuscated Code**: Base64-encoded, hex-encoded, or otherwise obfuscated payloads
-4. **Credential Harvesting**: Code that collects API keys, tokens, or passwords
-5. **Command Injection**: Unsafe use of os.system, subprocess with shell=True, eval, exec
-6. **Crypto Miners**: Cryptocurrency mining code
-7. **Hidden Network Calls**: Undisclosed HTTP requests to external servers
-8. **Environment Variable Leaks**: Reading sensitive env vars without legitimate purpose
+Work methodically through these phases:
 
-Output your analysis as a JSON array of findings. Each finding must have:
-- "rule_id": string (e.g., "AI-MC-001")
-- "severity": "critical" | "high" | "medium" | "low" | "info"
-- "threat_type": "malicious_code" | "tool_poisoning" | "prompt_injection" | "uncategorized"
-- "threat_level": "dangerous" | "warning" | "info"
-- "title": brief title
-- "description": detailed explanation
-- "location": "file_path:line_number" (approximate line if needed)
-- "evidence": the EXACT code snippet that triggered this finding (quote verbatim, max 200 chars)
+### Phase 1: Discovery (understand what you're looking at)
+1. Use Glob to find project manifests: package.json, pyproject.toml, go.mod, Cargo.toml, Gemfile
+2. Read the manifest to understand: language, dependencies, entry point
+3. Use Glob to map the project structure (*.py, *.js, *.ts, etc.)
+4. Identify the MCP server entry point (look for server initialization, tool registration)
 
-If all code is clean, return an empty array: []
-IMPORTANT: Only output the JSON array. Avoid false positives - flag genuinely suspicious patterns only.
+### Phase 2: Dependency Analysis
+1. Check dependencies for known suspicious packages
+2. Look for vendored/inline code that bypasses package managers
+3. Check for dynamic imports or runtime package installation (pip install, npm install at runtime)
 
-## Source Code Files
+### Phase 3: Tool Handler Audit (CRITICAL for MCP servers)
+1. Find all registered MCP tools (grep for server.tool, @mcp.tool, tool decorators, etc.)
+2. For EACH tool handler function:
+   - Read the full implementation
+   - Trace ALL inputs: where do tool parameters go?
+   - Check for: command injection, path traversal, SSRF, SQL injection
+   - Check for: credential access (env vars, files), network calls, file system access
+3. Compare tool descriptions with actual behavior (description says "calculator" but code reads files?)
 
+### Phase 4: Suspicious Pattern Hunt
+1. Grep for network calls: fetch, http, requests, urllib, axios, net.Dial
+2. Grep for env var access: process.env, os.environ, os.Getenv
+3. Grep for dangerous functions: eval, exec, subprocess, child_process, os.system, Function()
+4. Grep for file operations on sensitive paths: .ssh, .aws, .env, credentials
+5. Grep for encoding/obfuscation: base64, atob, fromCharCode, Buffer.from
+6. Grep for crypto mining: stratum, xmrig, coinhive, hashrate
+7. Check for data being sent to hardcoded external URLs
+
+### Phase 5: Data Flow Tracing
+1. For any suspicious patterns found, trace the full data flow:
+   - Where does the data originate? (user input, env var, file)
+   - Where does it go? (network call, file write, tool response)
+   - Is there any sanitization/validation?
+2. Distinguish between legitimate use and malicious patterns:
+   - A web scraper tool making HTTP requests is EXPECTED
+   - A calculator tool making HTTP requests is SUSPICIOUS
+   - Reading env vars for API keys the tool needs is EXPECTED
+   - Reading env vars and sending them to an external URL is MALICIOUS
+
+## Output Format
+
+After your analysis, output ONLY a JSON array of findings. Each finding:
+```json
+{
+  "rule_id": "AI-XX-NNN",
+  "severity": "critical|high|medium|low|info",
+  "threat_type": "malicious_code|tool_poisoning|prompt_injection|supply_chain|uncategorized",
+  "threat_level": "dangerous|warning|info",
+  "title": "brief title",
+  "description": "detailed explanation of WHY this is a threat, including data flow",
+  "location": "file_path:line_number",
+  "evidence": "exact code snippet (max 300 chars)"
+}
+```
+
+If the server is clean, return: []
+
+## Rules
+- ONLY flag genuinely suspicious patterns. Legitimate tool behavior is NOT a finding.
+- Every finding MUST include the exact code evidence and file location.
+- Trace data flows before flagging - a function reading env vars is not malicious by itself.
+- Consider the tool's declared purpose when judging behavior.
+- Do NOT flag standard framework/library patterns as suspicious.
 """
 
 
@@ -91,7 +139,6 @@ def walk_source_dir(source_dir: str) -> list[tuple[str, str]]:
     source_path = Path(source_dir)
 
     for root, dirs, filenames in os.walk(source_dir):
-        # Filter out skip directories
         dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
 
         for filename in filenames:
@@ -104,7 +151,6 @@ def walk_source_dir(source_dir: str) -> list[tuple[str, str]]:
             if ext not in SCANNABLE_EXTENSIONS:
                 continue
 
-            # Skip large files
             try:
                 size = filepath.stat().st_size
                 if size > MAX_FILE_SIZE or size == 0:
@@ -112,7 +158,6 @@ def walk_source_dir(source_dir: str) -> list[tuple[str, str]]:
             except OSError:
                 continue
 
-            # Read file
             try:
                 content = filepath.read_text(errors="replace")
                 rel_path = str(filepath.relative_to(source_path))
@@ -138,10 +183,7 @@ def _pattern_scan_source(
             for pattern in sig.patterns:
                 try:
                     for match in re.finditer(pattern, content, re.IGNORECASE):
-                        # Find line number
                         line_num = content[:match.start()].count("\n") + 1
-
-                        # Extract evidence with context
                         start = max(0, match.start() - 30)
                         end = min(len(content), match.end() + 30)
                         evidence = content[start:end].strip()
@@ -160,7 +202,7 @@ def _pattern_scan_source(
                             evidence=evidence,
                         )
                         findings.append(finding)
-                        break  # One match per signature per file
+                        break
                 except re.error:
                     pass
 
@@ -168,42 +210,44 @@ def _pattern_scan_source(
 
 
 async def _ai_analyze_source(
-    files: list[tuple[str, str]],
+    source_dir: str,
     model: str,
     config_dir: str,
 ) -> list[ScanFinding]:
-    """Use Claude Agent SDK to analyze source code."""
-    from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+    """Use Claude Agent SDK with file tools to audit the source code.
 
-    # Build content for analysis (respect size limit)
-    source_text = ""
-    total_size = 0
-    included_files = 0
+    The agent gets Read, Grep, Glob tools and explores the codebase
+    autonomously like a security specialist - discovering structure,
+    tracing data flows, and validating findings.
+    """
+    from claude_agent_sdk import (
+        AssistantMessage,
+        ClaudeAgentOptions,
+        ResultMessage,
+        TextBlock,
+        query,
+    )
 
-    for rel_path, content in files:
-        entry = f"\n### File: {rel_path}\n```\n{content}\n```\n"
-        if total_size + len(entry) > MAX_AI_CONTENT:
-            break
-        source_text += entry
-        total_size += len(entry)
-        included_files += 1
+    prompt = (
+        f"Audit the MCP server source code at: {source_dir}\n\n"
+        "Follow the phased approach from your system prompt. "
+        "Start by discovering the project structure, then trace data flows "
+        "through tool handlers. Output your findings as a JSON array at the end."
+    )
 
-    if not source_text:
-        return []
-
-    prompt = SOURCE_ANALYSIS_PROMPT + source_text
-    logger.info("AI analyzing %d files (%.1f KB)", included_files, total_size / 1024)
+    logger.info("AI agent auditing source at %s with model %s", source_dir, model)
 
     try:
-        from claude_agent_sdk import AssistantMessage, TextBlock
-
         result_text = ""
         stream = query(
             prompt=prompt,
             options=ClaudeAgentOptions(
+                system_prompt=SECURITY_AGENT_PROMPT,
                 model=model,
-                max_turns=1,
+                max_turns=30,
                 permission_mode="bypassPermissions",
+                allowed_tools=["Read", "Grep", "Glob"],
+                cwd=source_dir,
                 **_sdk_kwargs(config_dir),
             ),
         )
@@ -217,16 +261,25 @@ async def _ai_analyze_source(
                 elif isinstance(message, ResultMessage):
                     if message.result:
                         result_text += "\n" + message.result
+                    cost = message.total_cost_usd or 0
+                    logger.info(
+                        "AI audit complete: %d turns, $%.4f",
+                        message.num_turns, cost,
+                    )
         finally:
             await stream.aclose()
 
         if not result_text:
+            logger.warning("AI audit returned empty result")
             return []
 
-        logger.debug("AI raw output (first 500): %s", result_text[:500])
+        logger.debug("AI audit output (last 500): %s", result_text[-500:])
 
+        # Extract the JSON findings from the agent's output
+        # The agent may produce lots of text (its analysis) with JSON at the end
         findings_data = _extract_json_array(result_text)
         if findings_data is None:
+            logger.warning("Could not extract JSON findings from AI audit output")
             return []
 
         findings = []
@@ -247,26 +300,47 @@ async def _ai_analyze_source(
             except (ValueError, KeyError) as e:
                 logger.warning("Skipping malformed AI finding: %s", e)
 
+        logger.info("AI audit produced %d findings", len(findings))
         return findings
 
     except Exception as e:
-        logger.error("AI source analysis failed: %s", e)
+        logger.error("AI source audit failed: %s", e)
         return []
 
 
 def _extract_json_array(text: str) -> list[dict[str, Any]] | None:
-    """Extract a JSON array from text."""
+    """Extract the LAST JSON array from text (agent output has analysis before JSON)."""
     text = text.strip()
-    if text.startswith("["):
-        try:
-            return json.loads(text)
-        except json.JSONDecodeError:
-            pass
 
+    # Find the last JSON array in the text
+    last_start = -1
+    i = len(text) - 1
+    while i >= 0:
+        if text[i] == "]":
+            # Find matching opening bracket
+            depth = 0
+            for j in range(i, -1, -1):
+                if text[j] == "]":
+                    depth += 1
+                elif text[j] == "[":
+                    depth -= 1
+                    if depth == 0:
+                        last_start = j
+                        break
+            if last_start >= 0:
+                try:
+                    return json.loads(text[last_start : i + 1])
+                except json.JSONDecodeError:
+                    last_start = -1
+                    i = i - 1
+                    continue
+            break
+        i -= 1
+
+    # Fallback: try from the beginning
     bracket_start = text.find("[")
     if bracket_start == -1:
         return None
-
     depth = 0
     for i in range(bracket_start, len(text)):
         if text[i] == "[":
@@ -298,19 +372,19 @@ async def analyze_source(
 
     all_findings: list[ScanFinding] = []
 
-    # Phase 1: Pattern scan
+    # Phase 1: Fast pattern scan
     pattern_findings = _pattern_scan_source(files, signatures)
     all_findings.extend(pattern_findings)
     logger.info("Pattern scan found %d issues in %d files", len(pattern_findings), total_files)
 
-    # Phase 2: AI analysis
-    if use_ai and config_dir and files:
-        ai_findings = await _ai_analyze_source(files, model, config_dir)
+    # Phase 2: AI agent audit (explores code with tools)
+    if use_ai and config_dir:
+        ai_findings = await _ai_analyze_source(source_dir, model, config_dir)
         existing = {(f.location, f.rule_id) for f in pattern_findings}
         for af in ai_findings:
             if (af.location, af.rule_id) not in existing:
                 all_findings.append(af)
-        logger.info("AI analysis found %d additional source issues", len(ai_findings))
+        logger.info("AI agent found %d additional source issues", len(ai_findings))
 
     return all_findings, scanned_files, total_files
 
