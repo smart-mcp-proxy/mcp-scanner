@@ -20,6 +20,18 @@ from mcp_scanner.models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _sdk_kwargs(config_dir: str) -> dict:
+    """Build SDK kwargs - local uses system CLI, Docker uses bundled with env."""
+    import shutil
+    kwargs: dict = {}
+    system_claude = shutil.which("claude")
+    if system_claude:
+        kwargs["cli_path"] = system_claude
+    else:
+        kwargs["env"] = {"CLAUDE_CONFIG_DIR": config_dir}
+    return kwargs
+
 # File extensions to scan
 SCANNABLE_EXTENSIONS = {
     ".py", ".js", ".ts", ".jsx", ".tsx", ".mjs", ".cjs",
@@ -183,6 +195,8 @@ async def _ai_analyze_source(
     logger.info("AI analyzing %d files (%.1f KB)", included_files, total_size / 1024)
 
     try:
+        from claude_agent_sdk import AssistantMessage, TextBlock
+
         result_text = ""
         stream = query(
             prompt=prompt,
@@ -190,18 +204,23 @@ async def _ai_analyze_source(
                 model=model,
                 max_turns=1,
                 permission_mode="bypassPermissions",
-                env={"CLAUDE_CONFIG_DIR": config_dir},
+                **_sdk_kwargs(config_dir),
             ),
         )
 
         async for message in stream:
-            if isinstance(message, ResultMessage):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        result_text += block.text
+            elif isinstance(message, ResultMessage):
                 if message.result:
-                    result_text = message.result
-                break
+                    result_text += "\n" + message.result
 
         if not result_text:
             return []
+
+        logger.debug("AI raw output (first 500): %s", result_text[:500])
 
         findings_data = _extract_json_array(result_text)
         if findings_data is None:
@@ -301,10 +320,6 @@ def analyze_source_sync(
     use_ai: bool = True,
 ) -> tuple[list[ScanFinding], list[str], int]:
     """Synchronous wrapper for analyze_source."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(
-            analyze_source(source_dir, signatures, model, config_dir, use_ai)
-        )
-    finally:
-        loop.close()
+    return asyncio.run(
+        analyze_source(source_dir, signatures, model, config_dir, use_ai)
+    )

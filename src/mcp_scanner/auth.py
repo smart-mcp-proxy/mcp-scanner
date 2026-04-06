@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import shutil
@@ -10,42 +9,49 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+# Known credential file names
+CREDENTIAL_FILES = [
+    ".credentials.json",  # Agent SDK / Docker deployments (K8s mounts)
+    ".claude.json",       # Claude Code desktop app
+]
+
 
 def get_claude_config_dir() -> str:
     """Return Claude config directory from env or default."""
     return os.environ.get("CLAUDE_CONFIG_DIR", os.path.expanduser("~/.claude"))
 
 
+def _find_credentials(config_dir: str) -> str | None:
+    """Find the credentials file in the config directory."""
+    for name in CREDENTIAL_FILES:
+        path = os.path.join(config_dir, name)
+        if os.path.exists(path):
+            return path
+    return None
+
+
 def ensure_writable_config() -> str:
-    """Create a writable config dir with Claude credentials.
+    """Ensure a writable config dir with Claude credentials exists.
 
-    The Agent SDK needs a writable config directory for session files,
-    but we mount ~/.claude as read-only. This copies credentials to a
-    writable tmpdir.
+    Two deployment scenarios:
+    1. **Local (dev)**: ~/.claude/ is writable and has .claude.json from Claude Code.
+       System `claude` CLI is available and handles auth natively.
+    2. **Docker (mcpproxy)**: ~/.claude/ is mounted read-only with .credentials.json.
+       Bundled SDK CLI is used. We copy credentials to a writable tmpdir.
 
-    Returns the path to the writable config directory.
+    Returns the path to the (writable) config directory.
     """
     src_dir = get_claude_config_dir()
-    creds_path = os.path.join(src_dir, ".credentials.json")
+    creds_path = _find_credentials(src_dir)
 
-    if not os.path.exists(creds_path):
+    if not creds_path:
         raise RuntimeError(
-            f"No credentials found at {creds_path}. "
-            "Set CLAUDE_CONFIG_DIR or ensure ~/.claude/.credentials.json exists. "
+            f"No credentials found in {src_dir}. "
+            f"Looked for: {', '.join(CREDENTIAL_FILES)}. "
             "Run 'claude login' to authenticate."
         )
 
-    # Validate credentials file
-    try:
-        with open(creds_path) as f:
-            creds = json.load(f)
-        if "claudeAiOauth" not in creds:
-            raise RuntimeError(
-                f"Credentials at {creds_path} missing claudeAiOauth section. "
-                "Run 'claude login' to re-authenticate."
-            )
-    except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid credentials file at {creds_path}: {e}")
+    logger.info("Found credentials at %s", creds_path)
 
     # Check if source dir is writable
     test_file = os.path.join(src_dir, ".write_test")
@@ -57,13 +63,18 @@ def ensure_writable_config() -> str:
     except OSError:
         pass
 
-    # Copy to writable temp dir
+    # Source is read-only (Docker mount) - copy to writable tmpdir
     tmp_dir = tempfile.mkdtemp(prefix="mcp_scanner_claude_")
-    shutil.copy2(creds_path, os.path.join(tmp_dir, ".credentials.json"))
 
-    settings_path = os.path.join(src_dir, "settings.json")
-    if os.path.exists(settings_path):
-        shutil.copy2(settings_path, os.path.join(tmp_dir, "settings.json"))
+    for name in CREDENTIAL_FILES:
+        src = os.path.join(src_dir, name)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(tmp_dir, name))
+
+    for extra in ["settings.json", "settings.local.json"]:
+        src = os.path.join(src_dir, extra)
+        if os.path.exists(src):
+            shutil.copy2(src, os.path.join(tmp_dir, extra))
 
     logger.info("Created writable config dir at %s", tmp_dir)
     return tmp_dir

@@ -19,6 +19,26 @@ from mcp_scanner.models import (
 
 logger = logging.getLogger(__name__)
 
+
+def _sdk_kwargs(config_dir: str) -> dict:
+    """Build ClaudeAgentOptions kwargs for SDK invocation.
+
+    Locally: use system claude CLI (shares auth with Claude Code), don't override env.
+    Docker: use bundled CLI, set CLAUDE_CONFIG_DIR via env.
+    """
+    import shutil
+    kwargs: dict = {}
+    system_claude = shutil.which("claude")
+    if system_claude:
+        # Local: system CLI handles its own auth, don't pass env to avoid breaking it
+        logger.info("Using system Claude CLI: %s", system_claude)
+        kwargs["cli_path"] = system_claude
+    else:
+        # Docker: bundled CLI needs CLAUDE_CONFIG_DIR to find mounted credentials
+        logger.info("Using SDK bundled CLI with CLAUDE_CONFIG_DIR=%s", config_dir)
+        kwargs["env"] = {"CLAUDE_CONFIG_DIR": config_dir}
+    return kwargs
+
 TOOL_ANALYSIS_PROMPT = """You are an MCP (Model Context Protocol) security analyst. Analyze the following MCP tool definitions for security threats.
 
 For each tool, check for:
@@ -111,6 +131,8 @@ async def _ai_analyze_tools(
     prompt = TOOL_ANALYSIS_PROMPT + tools_text
 
     try:
+        from claude_agent_sdk import AssistantMessage, TextBlock
+
         result_text = ""
         stream = query(
             prompt=prompt,
@@ -118,19 +140,24 @@ async def _ai_analyze_tools(
                 model=model,
                 max_turns=1,
                 permission_mode="bypassPermissions",
-                env={"CLAUDE_CONFIG_DIR": config_dir},
+                **_sdk_kwargs(config_dir),
             ),
         )
 
         async for message in stream:
-            if isinstance(message, ResultMessage):
+            if isinstance(message, AssistantMessage):
+                for block in message.content:
+                    if isinstance(block, TextBlock):
+                        result_text += block.text
+            elif isinstance(message, ResultMessage):
                 if message.result:
-                    result_text = message.result
-                break
+                    result_text += "\n" + message.result
 
         if not result_text:
             logger.warning("AI analysis returned empty result")
             return []
+
+        logger.debug("AI raw output (first 500): %s", result_text[:500])
 
         # Parse JSON from result
         findings_data = _extract_json_array(result_text)
@@ -234,10 +261,6 @@ def analyze_tools_sync(
     use_ai: bool = True,
 ) -> list[ScanFinding]:
     """Synchronous wrapper for analyze_tools."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(
-            analyze_tools(tools, signatures, model, config_dir, use_ai)
-        )
-    finally:
-        loop.close()
+    return asyncio.run(
+        analyze_tools(tools, signatures, model, config_dir, use_ai)
+    )

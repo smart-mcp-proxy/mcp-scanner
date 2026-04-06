@@ -126,11 +126,7 @@ async def run_scan(config: ScanConfig) -> ScanReport:
 
 def run_scan_sync(config: ScanConfig) -> ScanReport:
     """Synchronous wrapper for run_scan."""
-    loop = asyncio.new_event_loop()
-    try:
-        return loop.run_until_complete(run_scan(config))
-    finally:
-        loop.close()
+    return asyncio.run(run_scan(config))
 
 
 def write_sarif_report(report: ScanReport, output_path: str) -> None:
