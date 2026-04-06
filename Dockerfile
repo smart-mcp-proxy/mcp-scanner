@@ -9,7 +9,7 @@ RUN apt-get update && \
 WORKDIR /app
 
 # Copy project files
-COPY pyproject.toml .
+COPY pyproject.toml uv.lock README.md ./
 COPY src/ src/
 
 # Install dependencies
