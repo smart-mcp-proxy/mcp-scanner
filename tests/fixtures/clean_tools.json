@@ -1,0 +1,37 @@
+[
+  {
+    "name": "get_weather",
+    "description": "Get the current weather for a given location. Returns temperature, conditions, and humidity.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "location": {"type": "string", "description": "City name or coordinates"},
+        "units": {"type": "string", "enum": ["celsius", "fahrenheit"], "default": "celsius"}
+      },
+      "required": ["location"]
+    }
+  },
+  {
+    "name": "list_files",
+    "description": "List files in the project directory. Returns file names and sizes.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "path": {"type": "string", "description": "Directory path relative to project root"},
+        "pattern": {"type": "string", "description": "Glob pattern filter", "default": "*"}
+      },
+      "required": ["path"]
+    }
+  },
+  {
+    "name": "run_tests",
+    "description": "Execute the test suite for the current project. Returns pass/fail status and any error messages.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "test_path": {"type": "string", "description": "Specific test file or directory"},
+        "verbose": {"type": "boolean", "default": false}
+      }
+    }
+  }
+]
