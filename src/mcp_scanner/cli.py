@@ -31,6 +31,7 @@ def main():
 @click.option("--signatures-url", envvar="SIGNATURES_URL", default=None, help="URL for online signature updates")
 @click.option("--no-network", is_flag=True, help="Skip online signature updates")
 @click.option("--verbose", "-v", is_flag=True, help="Verbose logging")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress agent progress output")
 def scan(
     source_dir: str | None,
     tools_file: str | None,
@@ -41,6 +42,7 @@ def scan(
     signatures_url: str | None,
     no_network: bool,
     verbose: bool,
+    quiet: bool,
 ):
     """Scan an MCP server for security threats."""
     # Setup logging
@@ -67,7 +69,7 @@ def scan(
         no_network=no_network,
     )
 
-    report = run_scan_sync(config)
+    report = run_scan_sync(config, quiet=quiet)
 
     # Output
     sarif_output = sarif_to_json(report)

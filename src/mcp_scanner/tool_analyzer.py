@@ -122,9 +122,12 @@ async def _ai_analyze_tools(
     tools: list[ToolDefinition],
     model: str,
     config_dir: str,
+    quiet: bool = False,
 ) -> list[ScanFinding]:
     """Use Claude Agent SDK to intelligently analyze tool definitions."""
     from claude_agent_sdk import ClaudeAgentOptions, ResultMessage, query
+
+    from mcp_scanner.progress import AgentProgress
 
     # Format tools for analysis
     tools_text = ""
@@ -136,8 +139,11 @@ async def _ai_analyze_tools(
 
     prompt = TOOL_ANALYSIS_PROMPT + tools_text
 
+    progress = AgentProgress(label="tool-audit", quiet=quiet)
+    progress.start()
+
     try:
-        from claude_agent_sdk import AssistantMessage, TextBlock
+        from claude_agent_sdk import AssistantMessage, TextBlock, ThinkingBlock, ToolResultBlock, ToolUseBlock
 
         result_text = ""
         stream = query(
@@ -153,12 +159,22 @@ async def _ai_analyze_tools(
         try:
             async for message in stream:
                 if isinstance(message, AssistantMessage):
+                    progress.on_turn()
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
+                            progress.on_text(block.text)
+                        elif isinstance(block, ThinkingBlock):
+                            progress.on_thinking(block.thinking)
+                        elif isinstance(block, ToolUseBlock):
+                            progress.on_tool_use(block.name, block.input)
+                        elif isinstance(block, ToolResultBlock):
+                            progress.on_tool_result(block.is_error)
                 elif isinstance(message, ResultMessage):
                     if message.result:
                         result_text += "\n" + message.result
+                    cost = message.total_cost_usd or 0
+                    progress.on_complete(message.num_turns, cost)
         finally:
             await stream.aclose()
 
@@ -235,6 +251,7 @@ async def analyze_tools(
     model: str = "claude-sonnet-4-6",
     config_dir: str | None = None,
     use_ai: bool = True,
+    quiet: bool = False,
 ) -> list[ScanFinding]:
     """Analyze tool definitions for security threats.
 
@@ -249,7 +266,7 @@ async def analyze_tools(
 
     # Phase 2: AI-powered analysis
     if use_ai and config_dir:
-        ai_findings = await _ai_analyze_tools(tools, model, config_dir)
+        ai_findings = await _ai_analyze_tools(tools, model, config_dir, quiet=quiet)
         # Deduplicate: skip AI findings that match existing pattern findings by tool+rule
         existing = {(f.location, f.rule_id) for f in pattern_findings}
         for af in ai_findings:
@@ -268,8 +285,9 @@ def analyze_tools_sync(
     model: str = "claude-sonnet-4-6",
     config_dir: str | None = None,
     use_ai: bool = True,
+    quiet: bool = False,
 ) -> list[ScanFinding]:
     """Synchronous wrapper for analyze_tools."""
     return asyncio.run(
-        analyze_tools(tools, signatures, model, config_dir, use_ai)
+        analyze_tools(tools, signatures, model, config_dir, use_ai, quiet=quiet)
     )

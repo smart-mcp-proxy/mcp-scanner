@@ -224,6 +224,7 @@ async def _ai_analyze_source(
     source_dir: str,
     model: str,
     config_dir: str,
+    quiet: bool = False,
 ) -> list[ScanFinding]:
     """Use Claude Agent SDK with file tools to audit the source code.
 
@@ -236,8 +237,13 @@ async def _ai_analyze_source(
         ClaudeAgentOptions,
         ResultMessage,
         TextBlock,
+        ThinkingBlock,
+        ToolResultBlock,
+        ToolUseBlock,
         query,
     )
+
+    from mcp_scanner.progress import AgentProgress
 
     prompt = (
         f"Audit the MCP server source code at: {source_dir}\n\n"
@@ -247,6 +253,8 @@ async def _ai_analyze_source(
     )
 
     logger.info("AI agent auditing source at %s with model %s", source_dir, model)
+    progress = AgentProgress(label="source-audit", quiet=quiet)
+    progress.start()
 
     try:
         result_text = ""
@@ -266,13 +274,22 @@ async def _ai_analyze_source(
         try:
             async for message in stream:
                 if isinstance(message, AssistantMessage):
+                    progress.on_turn()
                     for block in message.content:
                         if isinstance(block, TextBlock):
                             result_text += block.text
+                            progress.on_text(block.text)
+                        elif isinstance(block, ThinkingBlock):
+                            progress.on_thinking(block.thinking)
+                        elif isinstance(block, ToolUseBlock):
+                            progress.on_tool_use(block.name, block.input)
+                        elif isinstance(block, ToolResultBlock):
+                            progress.on_tool_result(block.is_error)
                 elif isinstance(message, ResultMessage):
                     if message.result:
                         result_text += "\n" + message.result
                     cost = message.total_cost_usd or 0
+                    progress.on_complete(message.num_turns, cost)
                     logger.info(
                         "AI audit complete: %d turns, $%.4f",
                         message.num_turns, cost,
@@ -372,6 +389,7 @@ async def analyze_source(
     model: str = "claude-sonnet-4-6",
     config_dir: str | None = None,
     use_ai: bool = True,
+    quiet: bool = False,
 ) -> tuple[list[ScanFinding], list[str], int]:
     """Analyze source code for security threats.
 
@@ -390,7 +408,7 @@ async def analyze_source(
 
     # Phase 2: AI agent audit (explores code with tools)
     if use_ai and config_dir:
-        ai_findings = await _ai_analyze_source(source_dir, model, config_dir)
+        ai_findings = await _ai_analyze_source(source_dir, model, config_dir, quiet=quiet)
         existing = {(f.location, f.rule_id) for f in pattern_findings}
         for af in ai_findings:
             if (af.location, af.rule_id) not in existing:
@@ -406,8 +424,9 @@ def analyze_source_sync(
     model: str = "claude-sonnet-4-6",
     config_dir: str | None = None,
     use_ai: bool = True,
+    quiet: bool = False,
 ) -> tuple[list[ScanFinding], list[str], int]:
     """Synchronous wrapper for analyze_source."""
     return asyncio.run(
-        analyze_source(source_dir, signatures, model, config_dir, use_ai)
+        analyze_source(source_dir, signatures, model, config_dir, use_ai, quiet=quiet)
     )

@@ -26,7 +26,7 @@ from mcp_scanner.tool_analyzer import analyze_tools
 logger = logging.getLogger(__name__)
 
 
-async def run_scan(config: ScanConfig) -> ScanReport:
+async def run_scan(config: ScanConfig, quiet: bool = False) -> ScanReport:
     """Execute a full security scan based on configuration.
 
     Orchestrates tool description analysis, source code analysis,
@@ -80,6 +80,7 @@ async def run_scan(config: ScanConfig) -> ScanReport:
                 model=config.model,
                 config_dir=config_dir,
                 use_ai=use_ai,
+                quiet=quiet,
             )
             all_findings.extend(tool_findings)
             logger.info("Tool analysis complete: %d findings", len(tool_findings))
@@ -98,6 +99,7 @@ async def run_scan(config: ScanConfig) -> ScanReport:
                 model=config.model,
                 config_dir=config_dir,
                 use_ai=use_ai,
+                quiet=quiet,
             )
             all_findings.extend(source_findings)
             scan_context.scanned_files = scanned_files[:100]  # Cap for report size
@@ -124,9 +126,9 @@ async def run_scan(config: ScanConfig) -> ScanReport:
     return report
 
 
-def run_scan_sync(config: ScanConfig) -> ScanReport:
+def run_scan_sync(config: ScanConfig, quiet: bool = False) -> ScanReport:
     """Synchronous wrapper for run_scan."""
-    return asyncio.run(run_scan(config))
+    return asyncio.run(run_scan(config, quiet=quiet))
 
 
 def write_sarif_report(report: ScanReport, output_path: str) -> None:
