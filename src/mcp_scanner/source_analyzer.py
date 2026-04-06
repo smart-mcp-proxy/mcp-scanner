@@ -208,14 +208,17 @@ async def _ai_analyze_source(
             ),
         )
 
-        async for message in stream:
-            if isinstance(message, AssistantMessage):
-                for block in message.content:
-                    if isinstance(block, TextBlock):
-                        result_text += block.text
-            elif isinstance(message, ResultMessage):
-                if message.result:
-                    result_text += "\n" + message.result
+        try:
+            async for message in stream:
+                if isinstance(message, AssistantMessage):
+                    for block in message.content:
+                        if isinstance(block, TextBlock):
+                            result_text += block.text
+                elif isinstance(message, ResultMessage):
+                    if message.result:
+                        result_text += "\n" + message.result
+        finally:
+            await stream.aclose()
 
         if not result_text:
             return []
