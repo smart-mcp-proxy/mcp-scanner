@@ -36,9 +36,26 @@ def _find_credentials(config_dir: str) -> str | None:
     return None
 
 
+def _resolve_api_key() -> str | None:
+    """Find Anthropic API key (sk-ant-api03-...) from env vars."""
+    val = os.environ.get("ANTHROPIC_API_KEY")
+    if val and val.startswith("sk-ant-api"):
+        return val
+    return None
+
+
+def _resolve_oauth_token() -> str | None:
+    """Find Claude OAuth token (sk-ant-oat01-...) from env vars."""
+    for var in ("CLAUDE_CODE_AUTH_TOKEN", "CLAUDE_CODE_OAUTH_TOKEN"):
+        val = os.environ.get(var)
+        if val and "oat" in val:
+            return val
+    return None
+
+
 def has_api_key() -> bool:
-    """Check if ANTHROPIC_API_KEY is set."""
-    return bool(os.environ.get("ANTHROPIC_API_KEY"))
+    """Check if an API key is available."""
+    return bool(_resolve_api_key())
 
 
 def has_system_claude() -> bool:
@@ -60,8 +77,28 @@ def ensure_writable_config() -> str:
     # If API key is set, the SDK handles auth directly
     if has_api_key():
         logger.info("Using ANTHROPIC_API_KEY for authentication")
-        # Still need a writable config dir for SDK session files
         tmp_dir = tempfile.mkdtemp(prefix="mcp_scanner_claude_")
+        return tmp_dir
+
+    # If OAuth token is available, generate .credentials.json for bundled CLI
+    oauth_token = _resolve_oauth_token()
+    if oauth_token:
+        import json
+        logger.info("Using OAuth token (CLAUDE_CODE_AUTH_TOKEN) for authentication")
+        tmp_dir = tempfile.mkdtemp(prefix="mcp_scanner_claude_")
+        creds = {
+            "claudeAiOauth": {
+                "accessToken": oauth_token,
+                "refreshToken": "",
+                "expiresAt": 9999999999999,
+                "scopes": ["user:inference", "user:profile"],
+            }
+        }
+        creds_path = os.path.join(tmp_dir, ".credentials.json")
+        with open(creds_path, "w") as f:
+            json.dump(creds, f)
+        os.chmod(creds_path, 0o600)
+        logger.info("Generated .credentials.json at %s", tmp_dir)
         return tmp_dir
 
     src_dir = get_claude_config_dir()
