@@ -29,14 +29,25 @@ logger = logging.getLogger(__name__)
 
 
 def _sdk_kwargs(config_dir: str) -> dict:
-    """Build SDK kwargs - local uses system CLI, Docker uses bundled with env."""
+    """Build ClaudeAgentOptions kwargs based on available auth method.
+
+    Local: system claude CLI, no env override needed.
+    Docker with API key: bundled CLI + ANTHROPIC_API_KEY in env.
+    Docker with OAuth: bundled CLI + CLAUDE_CONFIG_DIR in env.
+    """
     import shutil
     kwargs: dict = {}
     system_claude = shutil.which("claude")
     if system_claude:
+        # Local: system CLI handles its own auth
         kwargs["cli_path"] = system_claude
     else:
-        kwargs["env"] = {"CLAUDE_CONFIG_DIR": config_dir}
+        # Docker: bundled CLI needs env vars
+        env = {"CLAUDE_CONFIG_DIR": config_dir}
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+        kwargs["env"] = env
     return kwargs
 
 

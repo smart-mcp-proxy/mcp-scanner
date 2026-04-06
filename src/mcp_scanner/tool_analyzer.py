@@ -21,22 +21,27 @@ logger = logging.getLogger(__name__)
 
 
 def _sdk_kwargs(config_dir: str) -> dict:
-    """Build ClaudeAgentOptions kwargs for SDK invocation.
+    """Build ClaudeAgentOptions kwargs based on available auth method.
 
-    Locally: use system claude CLI (shares auth with Claude Code), don't override env.
-    Docker: use bundled CLI, set CLAUDE_CONFIG_DIR via env.
+    Local: system claude CLI, no env override needed.
+    Docker with API key: bundled CLI + ANTHROPIC_API_KEY in env.
+    Docker with OAuth: bundled CLI + CLAUDE_CONFIG_DIR in env.
     """
     import shutil
     kwargs: dict = {}
     system_claude = shutil.which("claude")
     if system_claude:
-        # Local: system CLI handles its own auth, don't pass env to avoid breaking it
         logger.info("Using system Claude CLI: %s", system_claude)
         kwargs["cli_path"] = system_claude
     else:
-        # Docker: bundled CLI needs CLAUDE_CONFIG_DIR to find mounted credentials
-        logger.info("Using SDK bundled CLI with CLAUDE_CONFIG_DIR=%s", config_dir)
-        kwargs["env"] = {"CLAUDE_CONFIG_DIR": config_dir}
+        env = {"CLAUDE_CONFIG_DIR": config_dir}
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
+            env["ANTHROPIC_API_KEY"] = api_key
+            logger.info("Using SDK bundled CLI with ANTHROPIC_API_KEY")
+        else:
+            logger.info("Using SDK bundled CLI with CLAUDE_CONFIG_DIR=%s", config_dir)
+        kwargs["env"] = env
     return kwargs
 
 TOOL_ANALYSIS_PROMPT = """You are an MCP (Model Context Protocol) security analyst. Analyze the following MCP tool definitions for security threats.
