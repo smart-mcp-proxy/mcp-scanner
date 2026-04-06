@@ -26,26 +26,34 @@ def ensure_writable_config() -> str:
     Returns the path to the writable config directory.
     """
     src_dir = get_claude_config_dir()
+    # Check for credentials: .credentials.json (Agent SDK) or .claude.json (Claude Code)
     creds_path = os.path.join(src_dir, ".credentials.json")
+    claude_json_path = os.path.join(src_dir, ".claude.json")
 
-    if not os.path.exists(creds_path):
+    found_creds = None
+    if os.path.exists(creds_path):
+        found_creds = creds_path
+    elif os.path.exists(claude_json_path):
+        found_creds = claude_json_path
+    else:
         raise RuntimeError(
-            f"No credentials found at {creds_path}. "
-            "Set CLAUDE_CONFIG_DIR or ensure ~/.claude/.credentials.json exists. "
+            f"No credentials found at {creds_path} or {claude_json_path}. "
+            "Set CLAUDE_CONFIG_DIR or ensure ~/.claude/.claude.json exists. "
             "Run 'claude login' to authenticate."
         )
 
     # Validate credentials file
     try:
-        with open(creds_path) as f:
+        with open(found_creds) as f:
             creds = json.load(f)
-        if "claudeAiOauth" not in creds:
+        # .credentials.json uses claudeAiOauth, .claude.json uses oauthAccount
+        if "claudeAiOauth" not in creds and "oauthAccount" not in creds:
             raise RuntimeError(
-                f"Credentials at {creds_path} missing claudeAiOauth section. "
+                f"Credentials at {found_creds} missing auth section. "
                 "Run 'claude login' to re-authenticate."
             )
     except json.JSONDecodeError as e:
-        raise RuntimeError(f"Invalid credentials file at {creds_path}: {e}")
+        raise RuntimeError(f"Invalid credentials file at {found_creds}: {e}")
 
     # Check if source dir is writable
     test_file = os.path.join(src_dir, ".write_test")
@@ -59,11 +67,13 @@ def ensure_writable_config() -> str:
 
     # Copy to writable temp dir
     tmp_dir = tempfile.mkdtemp(prefix="mcp_scanner_claude_")
-    shutil.copy2(creds_path, os.path.join(tmp_dir, ".credentials.json"))
+    shutil.copy2(found_creds, os.path.join(tmp_dir, os.path.basename(found_creds)))
 
-    settings_path = os.path.join(src_dir, "settings.json")
-    if os.path.exists(settings_path):
-        shutil.copy2(settings_path, os.path.join(tmp_dir, "settings.json"))
+    # Copy additional config files the SDK may need
+    for extra in (".credentials.json", ".claude.json", "settings.json"):
+        extra_path = os.path.join(src_dir, extra)
+        if os.path.exists(extra_path) and extra_path != found_creds:
+            shutil.copy2(extra_path, os.path.join(tmp_dir, extra))
 
     logger.info("Created writable config dir at %s", tmp_dir)
     return tmp_dir
