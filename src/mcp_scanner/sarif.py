@@ -23,10 +23,21 @@ def _severity_to_sarif_level(severity: str) -> str:
 
 def _build_sarif_result(finding: ScanFinding) -> dict[str, Any]:
     """Convert a ScanFinding to a SARIF result."""
+    # Extract tool name from location like "tool:get_credentials"
+    tool_name = ""
+    if finding.location.startswith("tool:"):
+        tool_name = finding.location[5:]
+
+    # Include tool name in message for tool findings
+    if tool_name:
+        message_text = f"Tool '{tool_name}': {finding.description}"
+    else:
+        message_text = finding.description
+
     result: dict[str, Any] = {
         "ruleId": finding.rule_id,
         "level": _severity_to_sarif_level(finding.severity),
-        "message": {"text": finding.description},
+        "message": {"text": message_text},
         "properties": {
             "threat_type": finding.threat_type,
             "threat_level": finding.threat_level,
@@ -35,22 +46,39 @@ def _build_sarif_result(finding: ScanFinding) -> dict[str, Any]:
         },
     }
 
+    if tool_name:
+        result["properties"]["tool_name"] = tool_name
+
     if finding.location:
         location: dict[str, Any] = {}
-        if finding.location.startswith("tool:"):
+        if tool_name:
             location["logicalLocations"] = [
                 {"name": finding.location, "kind": "function"}
             ]
+            # Add physicalLocation pointing to tools.json with evidence snippet
+            phys: dict[str, Any] = {
+                "artifactLocation": {"uri": "tools.json"},
+            }
+            if finding.evidence:
+                phys["region"] = {
+                    "startLine": 1,
+                    "snippet": {"text": finding.evidence},
+                }
+            location["physicalLocation"] = phys
         else:
             parts = finding.location.rsplit(":", 1)
             artifact: dict[str, Any] = {"uri": parts[0]}
-            region = None
+            region: dict[str, Any] | None = None
             if len(parts) == 2:
                 try:
                     region = {"startLine": int(parts[1])}
                 except ValueError:
                     pass
-            phys: dict[str, Any] = {"artifactLocation": artifact}
+            phys = {"artifactLocation": artifact}
+            if region is None:
+                region = {}
+            if finding.evidence:
+                region["snippet"] = {"text": finding.evidence}
             if region:
                 phys["region"] = region
             location["physicalLocation"] = phys

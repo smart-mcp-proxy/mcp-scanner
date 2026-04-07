@@ -17,8 +17,8 @@ RUN uv sync --no-dev --no-editable
 
 # Create non-root user (scanner doesn't need root)
 RUN groupadd -g 1000 scanner && useradd -u 1000 -g 1000 -m scanner && \
-    mkdir -p /scan/source /scan/report /root/.cache/mcp-scanner && \
-    chown -R scanner:scanner /app /scan /root/.cache
+    mkdir -p /scan/source /scan/report /home/scanner/.cache/mcp-scanner && \
+    chown -R scanner:scanner /app /scan /home/scanner/.cache
 
 USER scanner
 
@@ -27,6 +27,6 @@ USER scanner
 # - Reports written to /scan/report
 # - Claude config via CLAUDE_CONFIG_DIR env
 ENV CLAUDE_CONFIG_DIR=/app/.claude
-ENV SCANNER_CACHE_DIR=/root/.cache/mcp-scanner
+ENV SCANNER_CACHE_DIR=/home/scanner/.cache/mcp-scanner
 
 ENTRYPOINT ["uv", "run", "python", "-m", "mcp_scanner.entrypoint"]
