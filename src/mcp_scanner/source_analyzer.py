@@ -58,6 +58,14 @@ SCANNABLE_EXTENSIONS = {
     ".yml", ".yaml", ".json", ".toml", ".cfg", ".ini",
 }
 
+# Data/config extensions where escape sequences (\uXXXX, \xNN) are legitimate
+# encoding rather than obfuscation. Signatures marked with skip_on_data_files
+# (e.g. MCP-MC-001 "Obfuscated code pattern") are not run against these files
+# to avoid false positives on serialized data emitted by JSON/YAML encoders.
+DATA_EXTENSIONS = {
+    ".json", ".yml", ".yaml", ".toml", ".cfg", ".ini",
+}
+
 # Files to skip
 SKIP_DIRS = {
     "node_modules", ".git", "__pycache__", ".venv", "venv",
@@ -195,8 +203,17 @@ def _pattern_scan_source(
     findings: list[ScanFinding] = []
 
     for rel_path, content in files:
+        ext = Path(rel_path).suffix.lower()
+        is_data_file = ext in DATA_EXTENSIONS
         for sig in signatures:
             if sig.category not in ("malicious_code",):
+                continue
+
+            # Skip signatures whose patterns overlap with legitimate
+            # JSON/YAML/TOML escape encodings on data files (e.g. MCP-MC-001
+            # matches "\\uXXXX" which is just JSON's encoding for non-ASCII
+            # characters and not actual code obfuscation).
+            if is_data_file and sig.skip_on_data_files:
                 continue
 
             for pattern in sig.patterns:

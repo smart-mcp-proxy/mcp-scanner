@@ -113,6 +113,11 @@ class VulnerabilitySignature(BaseModel):
     patterns: list[str] = Field(default_factory=list)
     description: str = ""
     examples: list[str] = Field(default_factory=list)
+    # When true, this signature is skipped for data/config files (.json, .yaml,
+    # .toml, .ini, .cfg) where its patterns would generate false positives.
+    # Used for rules like MCP-MC-001 (obfuscated code) whose patterns (\\uXXXX,
+    # \\xNN, fromCharCode) overlap with legitimate data-file escape encodings.
+    skip_on_data_files: bool = False
 
 
 def calculate_risk_score(findings: list[ScanFinding]) -> int:

@@ -136,7 +136,8 @@
     "examples": [
       "eval(base64.b64decode('aW1wb3J0IG9z...'))",
       "exec(bytes.fromhex('696d706f7274').decode())"
-    ]
+    ],
+    "skip_on_data_files": true
   },
   {
     "id": "MCP-MC-002",
